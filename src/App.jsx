@@ -1,115 +1,97 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { io } from 'socket.io-client';
+import { v4 as uuid } from 'uuid';
 
-function Square({ value, onSquareClick }) {
-  const className = "square" + (value === 'X' ? " x" : "");
-  return (
-    <button className={className} onClick={onSquareClick}>
-      {value}
-    </button>
-  );
+function getRoomIdFromURL() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('room') || null;
+}
+function setRoomIdInURL(id) {
+  const params = new URLSearchParams(window.location.search);
+  params.set('room', id);
+  window.history.replaceState({}, '', `?${params.toString()}`);
 }
 
-function Board({ xIsNext, squares, onPlay }) {
-  function handleClick(i) {
-    if (calculateWinner(squares) || squares[i]) {
-      return;
-    }
-    const nextSquares = squares.slice();
-    if (xIsNext) {
-      nextSquares[i] = 'X';
-    } else {
-      nextSquares[i] = 'O';
-    }
-    onPlay(nextSquares);
+export default function App() {
+  const [roomId, setRoomId] = useState(getRoomIdFromURL());
+  const [state, setState] = useState(null); 
+
+  const socket = useMemo(() => io('http://localhost:3001'), []);
+
+  useEffect(() => {
+    if (!roomId) return;
+    socket.emit('join', { roomId });
+    socket.on('state', setState);
+    return () => {
+      socket.off('state');
+    };
+  }, [socket, roomId]);
+
+  function createRoom() {
+    const id = uuid().slice(0, 8);
+    setRoomIdInURL(id);
+    setRoomId(id);
   }
 
-  const winner = calculateWinner(squares);
-  let status;
-  if (winner) {
-    status = 'Winner: ' + winner;
-  } else {
-    status = 'Next player: ' + (xIsNext ? 'X' : 'O');
+  function clickSquare(i) {
+    socket.emit('move', { roomId, square: i });
   }
 
-  return (
-    <>
-      <div className="status">{status}</div>
-      <div className="board-row">
-        <Square value={squares[0]} onSquareClick={() => handleClick(0)} />
-        <Square value={squares[1]} onSquareClick={() => handleClick(1)} />
-        <Square value={squares[2]} onSquareClick={() => handleClick(2)} />
-      </div>
-      <div className="board-row">
-        <Square value={squares[3]} onSquareClick={() => handleClick(3)} />
-        <Square value={squares[4]} onSquareClick={() => handleClick(4)} />
-        <Square value={squares[5]} onSquareClick={() => handleClick(5)} />
-      </div>
-      <div className="board-row">
-        <Square value={squares[6]} onSquareClick={() => handleClick(6)} />
-        <Square value={squares[7]} onSquareClick={() => handleClick(7)} />
-        <Square value={squares[8]} onSquareClick={() => handleClick(8)} />
-      </div>
-    </>
-  );
-}
-
-export default function Game() {
-  const [history, setHistory] = useState([new Array(9).fill(null)]);
-  const [currentMove, setCurrentMove] = useState(0);
-  const xIsNext = currentMove % 2 === 0;
-  const currentSquares = history[currentMove];
-
-  function handlePlay(nextSquares) {
-    const nextHistory = [...history.slice(0, currentMove + 1), nextSquares];
-    setHistory(nextHistory);
-    setCurrentMove(nextHistory.length - 1);
+  function reset() {
+    socket.emit('reset', { roomId });
   }
 
-  function jumpTo(nextMove) {
-    setCurrentMove(nextMove);
-  }
-
-  const moves = history.map((squares, move) => {
-    let description;
-    if (move > 0) {
-      description = 'Go to move #' + move;
-    } else {
-      description = 'Go to game start';
-    }
+  if (!roomId) {
     return (
-      <li key={move}>
-        <button onClick={() => jumpTo(move)}>{description}</button>
-      </li>
+      <div className="container">
+        <h1>Tic Tac Toe</h1>
+        <button onClick={createRoom}>Create Room</button>
+      </div>
     );
-  });
+  }
+
+  if (!state) {
+    return (
+      <div className="container">
+        <h1>Tic Tac Toe</h1>
+        <p>Loading game...</p>
+        <p>Room ID: {roomId}</p>
+      </div>
+    );
+  }
+
+  const { squares, xIsNext, winner, players } = state;
+  const status = winner
+    ? `Winner: ${winner}`
+    : players < 2
+    ? 'Waiting for another player...'
+    : `Next player: ${xIsNext ? 'X' : 'O'}`;
 
   return (
-    <div className="game">
-      <div className="game-board">
-        <Board xIsNext={xIsNext} squares={currentSquares} onPlay={handlePlay} />
-      </div>
-      <div className="game-info">
-        <ol>{moves}</ol>
+    <div className="container">
+      <h1>Tic Tac Toe</h1>
+      <p>Room ID: {roomId}</p>
+      <div className="status">{status}</div>
+      <div className="board">
+        <div className="board-row">
+          {squares.slice(0, 3).map((v, i) => (
+            <button key={i} className="square" onClick={() => clickSquare(i)}>{v}</button>
+          ))}
+        </div>
+        <div className="board-row">
+          {squares.slice(3, 6).map((v, i) => (
+            <button key={i + 3} className="square" onClick={() => clickSquare(i + 3)}>{v}</button>
+          ))}
+        </div>
+        <div className="board-row">
+          {squares.slice(6, 9).map((v, i) => (
+            <button key={i + 6} className="square" onClick={() => clickSquare(i + 6)}>{v}</button>
+          ))}
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <button onClick={reset}>Restart</button>
+        </div>
       </div>
     </div>
   );
-}
-
-function calculateWinner(squares) {
-  const lines = [
-    [0, 1, 2],
-    [3, 4, 5],
-    [6, 7, 8],
-    [0, 3, 6],
-    [1, 4, 7],
-    [2, 5, 8],
-    [0, 4, 8],
-    [2, 4, 6],
-  ];
-  for (const [a, b, c] of lines) {
-    if (squares[a] && squares[a] === squares[b] && squares[a] === squares[c]) {
-      return squares[a];
-    }
-  }
-  return null;
 }
